@@ -244,7 +244,6 @@ export const useBrowserStore = create<BrowserState>((set, get) => {
       const { tasks, tabs } = get();
       if (tasks.length <= 1) return;
 
-      const tabsInTask = tabs.filter((t) => t.taskId === taskId);
       const remainingTabs = tabs.filter((t) => t.taskId !== taskId);
       const remainingTasks = tasks.filter((t) => t.id !== taskId);
 
@@ -254,8 +253,6 @@ export const useBrowserStore = create<BrowserState>((set, get) => {
         activeTaskId: remainingTasks[0]?.id ?? null,
         activeTabId: remainingTabs[remainingTabs.length - 1]?.id ?? null,
       });
-
-      return tabsInTask;
     },
 
     setActiveTask: (taskId: string) => {

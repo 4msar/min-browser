@@ -8,27 +8,26 @@ import type { Bookmark, HistoryEntry, BrowserSettings } from '../types';
 // ─── Tauri invocation helpers ──────────────────────────────────────────────────
 
 export function useTauri() {
-  const store = useBrowserStore();
-
-  // Load initial data from Rust state
-  const loadData = useCallback(async () => {
-    try {
-      const [bookmarks, history, settings] = await Promise.all([
-        invoke<Bookmark[]>('get_bookmarks'),
-        invoke<HistoryEntry[]>('get_history'),
-        invoke<BrowserSettings>('get_settings'),
-      ]);
-      store.setBookmarks(bookmarks);
-      store.setHistory(history);
-      store.setSettings(settings);
-    } catch (err) {
-      console.error('Failed to load browser data:', err);
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
+  // Load initial data from Rust state once on mount only
   useEffect(() => {
+    async function loadData() {
+      try {
+        const [bookmarks, history, settings] = await Promise.all([
+          invoke<Bookmark[]>('get_bookmarks'),
+          invoke<HistoryEntry[]>('get_history'),
+          invoke<BrowserSettings>('get_settings'),
+        ]);
+        const { setBookmarks, setHistory, setSettings } = useBrowserStore.getState();
+        setBookmarks(bookmarks);
+        setHistory(history);
+        setSettings(settings);
+      } catch (err) {
+        console.error('Failed to load browser data:', err);
+      }
+    }
     loadData();
-  }, [loadData]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 }
 
 // ─── Tab management hook ───────────────────────────────────────────────────────
@@ -73,7 +72,10 @@ export function useTabManager() {
           const newUrl = event.payload?.url ?? '';
           store.updateTab(tabId, { url: newUrl, loading: false });
           if (newUrl && newUrl !== 'about:blank') {
-            addHistory(newUrl, useBrowserStore.getState().tabs.find(t => t.id === tabId)?.title ?? '');
+            const tabTitle =
+              useBrowserStore.getState().tabs.find((t) => t.id === tabId)
+                ?.title ?? '';
+            addHistory(newUrl, tabTitle);
           }
         });
 
@@ -187,20 +189,33 @@ export async function addBookmark(
   title: string,
   tags: string[] = []
 ): Promise<Bookmark | null> {
+  // Optimistic local add
+  const optimistic: Bookmark = {
+    id: `bm-${Date.now()}`,
+    url,
+    title,
+    tags,
+    created_at: new Date().toISOString(),
+  };
+  useBrowserStore.getState().addBookmark(optimistic);
   try {
     const bookmark = await invoke<Bookmark>('add_bookmark', { url, title, tags });
+    // Replace optimistic entry with server entry
+    useBrowserStore.getState().removeBookmark(optimistic.id);
     useBrowserStore.getState().addBookmark(bookmark);
     return bookmark;
   } catch (err) {
     console.error('add_bookmark failed:', err);
-    return null;
+    // Keep the optimistic entry even if invoke fails
+    return optimistic;
   }
 }
 
 export async function removeBookmark(id: string): Promise<void> {
+  // Optimistic local remove
+  useBrowserStore.getState().removeBookmark(id);
   try {
     await invoke('remove_bookmark', { id });
-    useBrowserStore.getState().removeBookmark(id);
   } catch (err) {
     console.error('remove_bookmark failed:', err);
   }
@@ -217,32 +232,42 @@ export async function isBookmarked(url: string): Promise<boolean> {
 // ─── History helpers ───────────────────────────────────────────────────────────
 
 export async function addHistory(url: string, title: string): Promise<void> {
+  const entry: HistoryEntry = {
+    id: `h-${Date.now()}`,
+    url,
+    title,
+    visited_at: new Date().toISOString(),
+  };
+  // Optimistic local add
+  useBrowserStore.getState().prependHistory(entry);
   try {
     await invoke('add_history', { url, title });
-    const entry: HistoryEntry = {
-      id: `h-${Date.now()}`,
-      url,
-      title,
-      visited_at: new Date().toISOString(),
-    };
-    useBrowserStore.getState().prependHistory(entry);
   } catch (err) {
     console.error('add_history failed:', err);
   }
 }
 
 export async function searchHistory(query: string): Promise<HistoryEntry[]> {
+  // Fall back to client-side search if invoke fails
   try {
     return await invoke<HistoryEntry[]>('search_history', { query });
   } catch {
-    return [];
+    const q = query.toLowerCase();
+    return useBrowserStore
+      .getState()
+      .history.filter(
+        (e) =>
+          e.url.toLowerCase().includes(q) ||
+          e.title.toLowerCase().includes(q)
+      );
   }
 }
 
 export async function clearHistory(): Promise<void> {
+  // Optimistic local clear
+  useBrowserStore.getState().clearHistory();
   try {
     await invoke('clear_history');
-    useBrowserStore.getState().clearHistory();
   } catch (err) {
     console.error('clear_history failed:', err);
   }
@@ -251,9 +276,10 @@ export async function clearHistory(): Promise<void> {
 // ─── Settings helpers ──────────────────────────────────────────────────────────
 
 export async function saveSettings(settings: BrowserSettings): Promise<void> {
+  // Always update local store first for immediate UI response
+  useBrowserStore.getState().setSettings(settings);
   try {
     await invoke('update_settings', { settings });
-    useBrowserStore.getState().setSettings(settings);
   } catch (err) {
     console.error('update_settings failed:', err);
   }

@@ -35,10 +35,10 @@ impl Default for BrowserSettings {
     fn default() -> Self {
         Self {
             search_engine: "https://duckduckgo.com/?q={}".to_string(),
-            homepage: "about:blank".to_string(),
+            homepage: String::new(),
             theme: "system".to_string(),
             ad_blocking: true,
-            new_tab_url: "about:blank".to_string(),
+            new_tab_url: String::new(),
         }
     }
 }
@@ -281,17 +281,7 @@ pub fn build_search_url(state: State<'_, AppState>, query: String) -> String {
     }
     settings
         .search_engine
-        .replace("{}", &urlencoding_encode(trimmed))
-}
-
-fn urlencoding_encode(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            ' ' => '+'.to_string(),
-            c if c.is_alphanumeric() || "-_.~".contains(c) => c.to_string(),
-            c => format!("%{:02X}", c as u8),
-        })
-        .collect()
+        .replace("{}", &urlencoding::encode(trimmed))
 }
 
 // ─── Bookmark commands ────────────────────────────────────────────────────────
